@@ -1,38 +1,99 @@
 name: Publish nightly build
 
+# Signed nightly release APKs via repository RELEASE_KEYSTORE_* secrets.
+# (Replaces upstream F-Droid DEBUG_KEYSTORE nightly on this fork.)
+
 on:
   push:
     branches:
       - main
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   nightly:
-    name: Publish nightly build
+    name: Signed nightly release APKs
     runs-on: ubuntu-latest
-    environment: nightly
+    timeout-minutes: 60
+    env:
+      RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+      RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+      RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+      RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v2
-      - name: Gradle dependency cache
-        uses: actions/cache@v3
+      - uses: actions/checkout@v4
+
+      - name: Gradle Wrapper Validation
+        uses: gradle/actions/wrapper-validation@v4
+
+      - uses: actions/setup-java@v4
         with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-      - name: Set up JDK 11
-        uses: actions/setup-java@v2
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Create local.properties
+        run: echo "sdk.dir=${ANDROID_SDK_ROOT}" >> local.properties
+
+      - name: Verify GitHub signing secrets
+        run: |
+          set -euo pipefail
+          missing=0
+          for var in RELEASE_KEYSTORE_BASE64 RELEASE_KEYSTORE_PASSWORD RELEASE_KEY_ALIAS RELEASE_KEY_PASSWORD; do
+            val="${!var}"
+            if [ -z "$val" ]; then
+              echo "::error::Missing repository secret: $var"
+              missing=1
+            else
+              echo "$var: present (${#val} chars)"
+            fi
+          done
+          exit "$missing"
+
+      - name: Assemble signed nightly release APKs (all ABIs)
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          ./gradlew :app:assembleNightlyRelease -PsplitApk --stacktrace --no-daemon \
+            | tee /tmp/gradle-nightly.log
+          if grep -q 'Release signing skipped' /tmp/gradle-nightly.log; then
+            echo "::error::Gradle skipped release signing — secrets did not reach the build."
+            exit 1
+          fi
+
+      - name: Verify APK signatures
+        run: |
+          set -euo pipefail
+          APKSIGNER=$(find "${ANDROID_SDK_ROOT}/build-tools" -name apksigner -type f | sort -V | tail -1)
+          found=0
+          shopt -s nullglob
+          for apk in app/build/outputs/apk/nightly/release/*-nightly-release.apk; do
+            found=1
+            echo "Verifying $apk"
+            "$APKSIGNER" verify --verbose "$apk"
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "::error::No nightly release APKs found"
+            ls -laR app/build/outputs/apk || true
+            exit 1
+          fi
+
+      - name: Upload nightly release APKs
+        uses: actions/upload-artifact@v4
         with:
-          distribution: 'adopt'
-          java-version: 11
-      - name: Build
-        run: ./gradlew assembleNightlyDebug
-      - name: F-Droid nightly builds
-        uses: grote/f-droid-nightly-action@v2
-        with:
-          debug_keystore: ${{ secrets.DEBUG_KEYSTORE }}
-          fdroid_nightly_args: --archive-older 10
-      - name: F-Droid repo permission clean-up # https://github.com/actions/cache/issues/753
-        run: sudo chown -R runner:docker fdroid
+          name: onionshare-nightly-release-${{ github.sha }}
+          path: app/build/outputs/apk/nightly/release/*-nightly-release.apk
+          if-no-files-found: error
+          retention-days: 14

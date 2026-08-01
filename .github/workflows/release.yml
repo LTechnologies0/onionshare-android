@@ -48,13 +48,17 @@ jobs:
       - name: Create local.properties
         run: echo "sdk.dir=${ANDROID_SDK_ROOT}" >> local.properties
 
-      - name: Verify signing secrets
+      - name: Verify GitHub signing secrets
         run: |
+          set -euo pipefail
           missing=0
-          for var in RELEASE_KEYSTORE_BASE64 RELEASE_KEYSTORE_PASSWORD RELEASE_KEY_ALIAS; do
-            if [ -z "${!var}" ]; then
-              echo "::error::$var is not set. See README → CI signing."
+          for var in RELEASE_KEYSTORE_BASE64 RELEASE_KEYSTORE_PASSWORD RELEASE_KEY_ALIAS RELEASE_KEY_PASSWORD; do
+            val="${!var}"
+            if [ -z "$val" ]; then
+              echo "::error::Missing repository secret: $var"
               missing=1
+            else
+              echo "$var: present (${#val} chars)"
             fi
           done
           exit "$missing"
@@ -72,7 +76,19 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Assemble signed stable release APKs (all ABIs)
-        run: ./gradlew :app:assembleStableRelease -PsplitApk --stacktrace --no-daemon
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          ./gradlew :app:assembleStableRelease -PsplitApk --stacktrace --no-daemon \
+            | tee /tmp/gradle-release.log
+          if grep -q 'Release signing skipped' /tmp/gradle-release.log; then
+            echo "::error::Gradle skipped release signing — secrets did not reach the build."
+            exit 1
+          fi
 
       - name: Verify APK signatures
         run: |

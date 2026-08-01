@@ -21,16 +21,16 @@ Release APKs are produced for `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64`.
 
 ## CI signing
 
-CI (`build.yml` / `ci.yml`) and Release both assemble **signed** per-ABI `stable` release APKs (not debug). Secrets are required on every CI run.
+CI (`build.yml` / `ci.yml`), Nightly, and Release all assemble **signed** per-ABI release APKs (not debug). Credentials are injected only from **repository secrets** (`${{ secrets.* }}` → env → Gradle). Builds fail if any secret is missing or if Gradle reports “Release signing skipped”.
 
-Release keystores are provided only via GitHub Actions secrets. Never commit `keystore.properties` or `.jks` / `.keystore` files.
+Never commit `keystore.properties` or `.jks` / `.keystore` files.
 
 | Secret | Description |
 | --- | --- |
 | `RELEASE_KEYSTORE_BASE64` | Base64-encoded `.jks` / `.keystore` |
 | `RELEASE_KEYSTORE_PASSWORD` | Keystore password |
-| `RELEASE_KEY_ALIAS` | Key alias (default example: `onionshare`) |
-| `RELEASE_KEY_PASSWORD` | Key password (defaults to keystore password if omitted locally) |
+| `RELEASE_KEY_ALIAS` | Key alias (`onionshare`) |
+| `RELEASE_KEY_PASSWORD` | Key password |
 
 Generate a keystore and print the `gh secret set` commands:
 
