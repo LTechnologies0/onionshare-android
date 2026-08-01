@@ -1,0 +1,142 @@
+name: Release
+
+# Publishes signed per-ABI stable release APKs to GitHub Releases.
+# ABIs: armeabi-v7a, arm64-v8a, x86, x86_64
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.2.3)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    if: >
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && inputs.tag != '')
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+      RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+      RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+      RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Gradle Wrapper Validation
+        uses: gradle/actions/wrapper-validation@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Create local.properties
+        run: echo "sdk.dir=${ANDROID_SDK_ROOT}" >> local.properties
+
+      - name: Verify signing secrets
+        run: |
+          missing=0
+          for var in RELEASE_KEYSTORE_BASE64 RELEASE_KEYSTORE_PASSWORD RELEASE_KEY_ALIAS; do
+            if [ -z "${!var}" ]; then
+              echo "::error::$var is not set. See README → CI signing."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Resolve release tag
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble signed stable release APKs (all ABIs)
+        run: ./gradlew :app:assembleStableRelease -PsplitApk --stacktrace --no-daemon
+
+      - name: Verify APK signatures
+        run: |
+          set -euo pipefail
+          APKSIGNER=$(find "${ANDROID_SDK_ROOT}/build-tools" -name apksigner -type f | sort -V | tail -1)
+          found=0
+          shopt -s nullglob
+          for apk in app/build/outputs/apk/stable/release/*-stable-release.apk; do
+            found=1
+            echo "Verifying $apk"
+            "$APKSIGNER" verify --verbose "$apk"
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "::error::No stable release APKs found after assembleStableRelease"
+            ls -laR app/build/outputs/apk || true
+            exit 1
+          fi
+
+      - name: Package APKs with checksums
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.meta.outputs.version }}"
+          mkdir -p dist/release
+          shopt -s nullglob
+          expected_abis=(armeabi-v7a arm64-v8a x86 x86_64)
+          for apk in app/build/outputs/apk/stable/release/*-stable-release.apk; do
+            base=$(basename "$apk")
+            # app-<abi>-stable-release.apk
+            abi=${base#app-}
+            abi=${abi%-stable-release.apk}
+            out="dist/release/onionshare-${VERSION}-${abi}.apk"
+            cp "$apk" "$out"
+            sha256sum "$out" >> dist/release/SHA256SUMS.txt
+            echo "- \`onionshare-${VERSION}-${abi}.apk\` — **${abi}**" >> dist/release/ABI_LIST.md
+          done
+          for abi in "${expected_abis[@]}"; do
+            if [ ! -f "dist/release/onionshare-${VERSION}-${abi}.apk" ]; then
+              echo "::error::Missing ABI APK: ${abi}"
+              exit 1
+            fi
+          done
+          {
+            echo "## OnionShare Android ${VERSION}"
+            echo
+            echo "Signed per-ABI release APKs (\`stable\` flavor)."
+            echo
+            echo "### Assets"
+            cat dist/release/ABI_LIST.md
+            echo
+            echo "Verify: \`sha256sum -c SHA256SUMS.txt\`"
+          } > dist/release/RELEASE_NOTES.md
+          ls -lh dist/release/
+          cat dist/release/SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: OnionShare Android ${{ steps.meta.outputs.version }}
+          generate_release_notes: true
+          prerelease: ${{ contains(steps.meta.outputs.version, 'alpha') || contains(steps.meta.outputs.version, 'beta') || contains(steps.meta.outputs.version, 'rc') }}
+          latest: ${{ !(contains(steps.meta.outputs.version, 'alpha') || contains(steps.meta.outputs.version, 'beta') || contains(steps.meta.outputs.version, 'rc')) }}
+          body_path: dist/release/RELEASE_NOTES.md
+          files: |
+            dist/release/onionshare-*.apk
+            dist/release/SHA256SUMS.txt
+          fail_on_unmatched_files: true

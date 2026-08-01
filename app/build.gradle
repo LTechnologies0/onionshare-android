@@ -69,8 +69,13 @@ android {
     }
     splits {
         abi {
-            // can not be defined per flavor, so we use a property to turn this on for F-Droid
-            enable project.hasProperty('splitApk')
+            // Per-ABI APKs for F-Droid (-PsplitApk) and GitHub release builds.
+            // Debug stays as a single universal APK for faster local installs.
+            def isReleaseTask = gradle.startParameter.taskNames.any {
+                def n = it.toString().toLowerCase()
+                n.contains("release") && !n.contains("debug")
+            }
+            enable project.hasProperty('splitApk') || isReleaseTask
             reset() // Resets the list of ABIs to remove all included by default
             include "armeabi-v7a", "arm64-v8a", "x86", "x86_64"
             universalApk false
@@ -205,3 +210,4 @@ tasks.register('unpackTorBinaries') {
 preBuild.dependsOn unpackTorBinaries
 
 apply from: "${rootProject.rootDir}/gradle/ktlint.gradle"
+apply from: "${rootProject.rootDir}/gradle/release-signing.gradle"
