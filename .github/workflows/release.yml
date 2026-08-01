@@ -94,9 +94,10 @@ jobs:
         run: |
           set -euo pipefail
           APKSIGNER=$(find "${ANDROID_SDK_ROOT}/build-tools" -name apksigner -type f | sort -V | tail -1)
+          # AGP names: app-stable-<abi>-release.apk
           found=0
           shopt -s nullglob
-          for apk in app/build/outputs/apk/stable/release/*-stable-release.apk; do
+          for apk in app/build/outputs/apk/stable/release/app-stable-*-release.apk; do
             found=1
             echo "Verifying $apk"
             "$APKSIGNER" verify --verbose "$apk"
@@ -114,11 +115,11 @@ jobs:
           mkdir -p dist/release
           shopt -s nullglob
           expected_abis=(armeabi-v7a arm64-v8a x86 x86_64)
-          for apk in app/build/outputs/apk/stable/release/*-stable-release.apk; do
+          for apk in app/build/outputs/apk/stable/release/app-stable-*-release.apk; do
             base=$(basename "$apk")
-            # app-<abi>-stable-release.apk
-            abi=${base#app-}
-            abi=${abi%-stable-release.apk}
+            # app-stable-<abi>-release.apk
+            abi=${base#app-stable-}
+            abi=${abi%-release.apk}
             out="dist/release/onionshare-${VERSION}-${abi}.apk"
             cp "$apk" "$out"
             sha256sum "$out" >> dist/release/SHA256SUMS.txt
