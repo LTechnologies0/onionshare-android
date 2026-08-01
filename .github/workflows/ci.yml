@@ -1,8 +1,11 @@
 name: CI
 
+# Builds signed per-ABI stable release APKs (not debug).
+# Requires RELEASE_KEYSTORE_* repository secrets.
+
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, "feat/**"]
   pull_request:
     branches: [main, master]
   workflow_dispatch:
@@ -16,9 +19,14 @@ permissions:
 
 jobs:
   build:
-    name: Build and test
+    name: Build signed release APKs
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
+    env:
+      RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+      RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+      RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+      RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
 
@@ -36,13 +44,50 @@ jobs:
       - name: Create local.properties
         run: echo "sdk.dir=${ANDROID_SDK_ROOT}" >> local.properties
 
-      - name: Check and assemble stable debug
-        run: ./gradlew check assembleStableDebug compileStableDebugAndroidTestSources --stacktrace --no-daemon
+      - name: Verify signing secrets
+        run: |
+          missing=0
+          for var in RELEASE_KEYSTORE_BASE64 RELEASE_KEYSTORE_PASSWORD RELEASE_KEY_ALIAS; do
+            if [ -z "${!var}" ]; then
+              echo "::error::$var is not set. CI builds signed release APKs — see README → CI signing."
+              missing=1
+            fi
+          done
+          exit "$missing"
 
-      - name: Upload debug APK
+      - name: Unit tests
+        run: ./gradlew check --stacktrace --no-daemon
+
+      - name: Assemble signed stable release APKs (all ABIs)
+        run: ./gradlew :app:assembleStableRelease -PsplitApk --stacktrace --no-daemon
+
+      - name: Verify APK signatures
+        run: |
+          set -euo pipefail
+          APKSIGNER=$(find "${ANDROID_SDK_ROOT}/build-tools" -name apksigner -type f | sort -V | tail -1)
+          found=0
+          shopt -s nullglob
+          for apk in app/build/outputs/apk/stable/release/*-stable-release.apk; do
+            found=1
+            echo "Verifying $apk"
+            "$APKSIGNER" verify --verbose "$apk"
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "::error::No stable release APKs found"
+            ls -laR app/build/outputs/apk || true
+            exit 1
+          fi
+          for abi in armeabi-v7a arm64-v8a x86 x86_64; do
+            if ! ls app/build/outputs/apk/stable/release/app-${abi}-stable-release.apk >/dev/null 2>&1; then
+              echo "::error::Missing ABI APK: ${abi}"
+              exit 1
+            fi
+          done
+
+      - name: Upload release APKs
         uses: actions/upload-artifact@v4
         with:
-          name: onionshare-stable-debug-${{ github.sha }}
-          path: app/build/outputs/apk/stable/debug/app-stable-debug.apk
+          name: onionshare-stable-release-${{ github.sha }}
+          path: app/build/outputs/apk/stable/release/*-stable-release.apk
           if-no-files-found: error
           retention-days: 14

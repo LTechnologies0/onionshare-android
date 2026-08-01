@@ -21,6 +21,8 @@ Release APKs are produced for `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64`.
 
 ## CI signing
 
+CI (`build.yml` / `ci.yml`) and Release both assemble **signed** per-ABI `stable` release APKs (not debug). Secrets are required on every CI run.
+
 Release keystores are provided only via GitHub Actions secrets. Never commit `keystore.properties` or `.jks` / `.keystore` files.
 
 | Secret | Description |
