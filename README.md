@@ -50,3 +50,7 @@ Locally: copy `keystore.properties.example` → `keystore.properties` (gitignore
 Push a tag `v*.*.*` (for example `v0.2.3-beta`) or run **Actions → Release → Run workflow**
 with a tag. The workflow builds signed per-ABI `stable` APKs and uploads them to a
 GitHub Release with `SHA256SUMS.txt`.
+
+Releases are marked **Latest** (GitHub `prerelease=false`) so `GET /releases/latest`
+works for Obtainium and similar clients. The APK `versionName` may still contain
+`-beta`; only the GitHub prerelease flag stays off.

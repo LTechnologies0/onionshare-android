@@ -122,7 +122,6 @@ jobs:
             abi=${abi%-release.apk}
             out="dist/release/onionshare-${VERSION}-${abi}.apk"
             cp "$apk" "$out"
-            sha256sum "$out" >> dist/release/SHA256SUMS.txt
             echo "- \`onionshare-${VERSION}-${abi}.apk\` — **${abi}**" >> dist/release/ABI_LIST.md
           done
           for abi in "${expected_abis[@]}"; do
@@ -131,6 +130,8 @@ jobs:
               exit 1
             fi
           done
+          # Basename paths so `sha256sum -c` works after downloading assets flat.
+          (cd dist/release && sha256sum onionshare-*.apk > SHA256SUMS.txt)
           {
             echo "## OnionShare Android ${VERSION}"
             echo
@@ -140,6 +141,8 @@ jobs:
             cat dist/release/ABI_LIST.md
             echo
             echo "Verify: \`sha256sum -c SHA256SUMS.txt\`"
+            echo
+            echo "Phones: prefer **arm64-v8a**. Obtainium APK filter: \`arm64-v8a\`."
           } > dist/release/RELEASE_NOTES.md
           ls -lh dist/release/
           cat dist/release/SHA256SUMS.txt
@@ -150,10 +153,14 @@ jobs:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: OnionShare Android ${{ steps.meta.outputs.version }}
           generate_release_notes: true
-          prerelease: ${{ contains(steps.meta.outputs.version, 'alpha') || contains(steps.meta.outputs.version, 'beta') || contains(steps.meta.outputs.version, 'rc') }}
-          latest: ${{ !(contains(steps.meta.outputs.version, 'alpha') || contains(steps.meta.outputs.version, 'beta') || contains(steps.meta.outputs.version, 'rc')) }}
+          # Do NOT set GitHub "prerelease": GitHub forbids make_latest on
+          # prereleases, so /releases/latest 404s and Obtainium breaks. The APK
+          # versionName may still contain -beta; only the GitHub flag is off.
+          prerelease: false
+          make_latest: true
           body_path: dist/release/RELEASE_NOTES.md
           files: |
             dist/release/onionshare-*.apk
             dist/release/SHA256SUMS.txt
           fail_on_unmatched_files: true
+          overwrite_files: true
