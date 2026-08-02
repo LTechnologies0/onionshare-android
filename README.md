@@ -1,10 +1,8 @@
 # OnionShare for Android
 
-[![Build](https://github.com/LTechnologies0/onionshare-android/actions/workflows/build.yml/badge.svg)](https://github.com/LTechnologies0/onionshare-android/actions/workflows/build.yml)
-[![CI](https://github.com/LTechnologies0/onionshare-android/actions/workflows/ci.yml/badge.svg)](https://github.com/LTechnologies0/onionshare-android/actions/workflows/ci.yml)
-[![Release](https://github.com/LTechnologies0/onionshare-android/actions/workflows/release.yml/badge.svg)](https://github.com/LTechnologies0/onionshare-android/actions/workflows/release.yml)
+[![Build](https://github.com/onionshare/onionshare-android/actions/workflows/build.yml/badge.svg)](https://github.com/onionshare/onionshare-android/actions/workflows/build.yml)
 
-Android version of OnionShare (fork of [onionshare/onionshare-android](https://github.com/onionshare/onionshare-android)).
+Android version of OnionShare.
 
 It was [audited by Radically Open Security](docs/report_onionshare-android.pdf) on June 30th, 2023.
 All found issues have since been resolved.
@@ -17,11 +15,18 @@ All found issues have since been resolved.
 ./gradlew assembleStableRelease -PsplitApk
 ```
 
-Release APKs are produced for `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64`.
+With `-PsplitApk`, release APKs are produced for `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64`.
 
-## CI signing
+## CI signing and releases
 
-CI (`build.yml` / `ci.yml`), Nightly, and Release all assemble **signed** per-ABI release APKs (not debug). Credentials are injected only from **repository secrets** (`${{ secrets.* }}` → env → Gradle). Builds fail if any secret is missing or if Gradle reports “Release signing skipped”.
+CI (`build.yml` / `ci.yml`) runs unit tests always. When repository
+`RELEASE_KEYSTORE_*` secrets are present, it also builds **signed** per-ABI
+stable release APKs and verifies signatures. Without secrets (typical for
+external pull requests), CI falls back to `assembleStableDebug` so contributors
+are not blocked.
+
+Nightly and the Release workflow always require signing secrets and fail if they
+are missing or if Gradle reports “Release signing skipped”.
 
 Never commit `keystore.properties` or `.jks` / `.keystore` files.
 
@@ -42,4 +47,6 @@ Locally: copy `keystore.properties.example` → `keystore.properties` (gitignore
 
 ### Publish a release
 
-Push a tag `v*.*.*` or run **Actions → Release → Run workflow** with a tag (e.g. `v0.2.3`). The workflow builds signed per-ABI `stable` APKs and uploads them to a GitHub Release with `SHA256SUMS.txt`.
+Push a tag `v*.*.*` (for example `v0.2.3-beta`) or run **Actions → Release → Run workflow**
+with a tag. The workflow builds signed per-ABI `stable` APKs and uploads them to a
+GitHub Release with `SHA256SUMS.txt`.

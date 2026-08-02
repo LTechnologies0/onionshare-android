@@ -1,5 +1,6 @@
-# Badge-compatible workflow; same signed release APK pipeline as ci.yml.
-# Signing credentials come only from repository secrets.
+# Badge-compatible workflow (same pipeline as ci.yml).
+# With RELEASE_KEYSTORE_* secrets: signed per-ABI release APKs.
+# Without secrets (e.g. external PRs): check + stable debug (upstream-compatible).
 name: Build and test
 
 on: [push, pull_request]
@@ -13,7 +14,7 @@ permissions:
 
 jobs:
   build:
-    name: Build signed release APKs
+    name: Build
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -38,25 +39,32 @@ jobs:
       - name: Create local.properties
         run: echo "sdk.dir=${ANDROID_SDK_ROOT}" >> local.properties
 
-      - name: Verify GitHub signing secrets
+      - name: Detect signing secrets
+        id: signing
         run: |
           set -euo pipefail
-          missing=0
+          ok=true
           for var in RELEASE_KEYSTORE_BASE64 RELEASE_KEYSTORE_PASSWORD RELEASE_KEY_ALIAS RELEASE_KEY_PASSWORD; do
             val="${!var}"
             if [ -z "$val" ]; then
-              echo "::error::Missing repository secret: $var"
-              missing=1
+              echo "$var: missing"
+              ok=false
             else
               echo "$var: present (${#val} chars)"
             fi
           done
-          exit "$missing"
+          if [ "$ok" = true ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Signing secrets incomplete — will build stable debug (external PRs / unset secrets)."
+          fi
 
       - name: Unit tests
         run: ./gradlew check --stacktrace --no-daemon
 
       - name: Assemble signed stable release APKs (all ABIs)
+        if: steps.signing.outputs.available == 'true'
         env:
           RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
           RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
@@ -72,10 +80,10 @@ jobs:
           fi
 
       - name: Verify APK signatures
+        if: steps.signing.outputs.available == 'true'
         run: |
           set -euo pipefail
           APKSIGNER=$(find "${ANDROID_SDK_ROOT}/build-tools" -name apksigner -type f | sort -V | tail -1)
-          # AGP names: app-stable-<abi>-release.apk
           found=0
           shopt -s nullglob
           for apk in app/build/outputs/apk/stable/release/app-stable-*-release.apk; do
@@ -96,9 +104,23 @@ jobs:
           done
 
       - name: Upload release APKs
+        if: steps.signing.outputs.available == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: onionshare-stable-release-${{ github.sha }}
           path: app/build/outputs/apk/stable/release/app-stable-*-release.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Assemble stable debug (no signing secrets)
+        if: steps.signing.outputs.available != 'true'
+        run: ./gradlew assembleStableDebug compileStableDebugAndroidTestSources --stacktrace --no-daemon
+
+      - name: Upload debug APK
+        if: steps.signing.outputs.available != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: onionshare-${{ github.sha }}-apk
+          path: app/build/outputs/apk/stable/debug/app-stable-debug.apk
           if-no-files-found: error
           retention-days: 14
